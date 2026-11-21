@@ -1,0 +1,238 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------- ENUMS ----------------
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+enum TransactionSource {
+  MANUAL
+  CSV_IMPORT
+}
+
+enum RecurrenceFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+enum NotificationType {
+  BUDGET_WARNING
+  BUDGET_EXCEEDED
+  GOAL_MILESTONE
+  GENERAL
+}
+
+enum ImportStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ---------------- USER ----------------
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String   @db.VarChar(100)
+  email          String   @unique @db.VarChar(255)
+  passwordHash   String
+  initialBalance Decimal  @default(0) @db.Decimal(14, 2)
+  currency       String   @default("INR") @db.VarChar(3)
+
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  categories     Category[]
+  transactions   Transaction[]
+  budgets        Budget[]
+  savingsGoals   SavingsGoal[]
+  recurringRules RecurringTransaction[]
+  notifications  Notification[]
+  importBatches  ImportBatch[]
+  sessions       RefreshSession[]
+}
+
+// ---------------- CATEGORY ----------------
+
+model Category {
+  id        String          @id @default(uuid()) @db.Uuid
+  userId    String          @db.Uuid
+  name      String          @db.VarChar(60)
+  type      TransactionType
+  icon      String?
+  color     String?
+
+  createdAt DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @db.Timestamptz(3)
+
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  budgets      Budget[]
+  recurring    RecurringTransaction[]
+
+  @@unique([userId, name, type])
+  @@index([userId, type])
+}
+
+// ---------------- TRANSACTION ----------------
+
+model Transaction {
+  id           String            @id @default(uuid()) @db.Uuid
+  userId       String            @db.Uuid
+  categoryId   String?           @db.Uuid
+  importBatchId String?          @db.Uuid
+  externalId   String?
+
+  amount       Decimal           @db.Decimal(14, 2)
+  type         TransactionType
+  source       TransactionSource @default(MANUAL)
+  description  String?           @db.VarChar(500)
+  transactionDate DateTime       @db.Timestamptz(3)
+
+  createdAt    DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime          @updatedAt @db.Timestamptz(3)
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category   Category?   @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  importBatch ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+
+  @@index([userId, transactionDate])
+  @@index([userId, type])
+  @@index([userId, categoryId])
+  @@unique([importBatchId, externalId])
+}
+
+// ---------------- BUDGET ----------------
+
+model Budget {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  categoryId String  @db.Uuid
+
+  amount    Decimal  @db.Decimal(14, 2)
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, categoryId, startDate])
+  @@index([userId, startDate, endDate])
+}
+
+// ---------------- SAVINGS GOAL ----------------
+
+model SavingsGoal {
+  id            String     @id @default(uuid()) @db.Uuid
+  userId        String     @db.Uuid
+  name          String     @db.VarChar(100)
+  targetAmount  Decimal    @db.Decimal(14, 2)
+  currentAmount Decimal    @default(0) @db.Decimal(14, 2)
+  deadline      DateTime?  @db.Date
+  status        GoalStatus @default(ACTIVE)
+
+  createdAt     DateTime   @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime   @updatedAt @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+}
+
+// ---------------- RECURRING TRANSACTION ----------------
+
+model RecurringTransaction {
+  id              String              @id @default(uuid()) @db.Uuid
+  userId          String              @db.Uuid
+  categoryId      String              @db.Uuid
+
+  amount          Decimal             @db.Decimal(14, 2)
+  type            TransactionType
+  description     String?             @db.VarChar(500)
+  frequency       RecurrenceFrequency
+
+  startDate       DateTime            @db.Date
+  nextOccurrence  DateTime            @db.Date
+  endDate         DateTime?           @db.Date
+  isActive        Boolean             @default(true)
+
+  createdAt       DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime            @updatedAt @db.Timestamptz(3)
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([userId, isActive, nextOccurrence])
+}
+
+// ---------------- NOTIFICATION ----------------
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @db.Uuid
+  title     String           @db.VarChar(150)
+  message   String           @db.VarChar(500)
+  type      NotificationType @default(GENERAL)
+  isRead    Boolean          @default(false)
+
+  createdAt DateTime         @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
+
+// ---------------- CSV IMPORT BATCH ----------------
+
+model ImportBatch {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  fileName    String       @db.VarChar(255)
+  status      ImportStatus @default(PROCESSING)
+  totalRows   Int          @default(0)
+  importedRows Int         @default(0)
+  failedRows  Int          @default(0)
+
+  createdAt   DateTime     @default(now()) @db.Timestamptz(3)
+  completedAt DateTime?    @db.Timestamptz(3)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId, createdAt])
+}
+
+// ---------------- REFRESH SESSION ----------------
+
+model RefreshSession {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime  @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
